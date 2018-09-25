@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+
+from robonomics_lighthouse.msg import Ask, Result
+from tempfile import NamedTemporaryFile 
+from std_msgs.msg import String
+import rospy, ipfsapi, os, requests
+import rosbag
+
+def callback(msg):
+    if msg.model == "QmQsMXoZKPNtGoTMpiGASU2Xxk6cJnEWdj7Bdt9mJo6UFD":
+        send_res = rospy.Publisher('/liability/infochan/signing/result', Result, queue_size=10)
+
+        with NamedTemporaryFile(dir="/root/aira", delete=False) as tmpfile:
+            ipfs = ipfsapi.connect()
+
+            result_file = tmpfile.name
+            rospy.loginfo('Start recording to %s...', result_file)
+
+            recorder = rosbag.Bag(result_file, 'w')
+            
+            apikey = 'e2c3f2d8d99099424fa924ea2f4672c4'
+            url = 'http://api.openweathermap.org/data/2.5/weather?q={city}&APPID={apikey}'
+            r = requests.get(url.format(city='Shanghai', apikey=apikey))
+            recorder.write('/aira/data/city', String(data=r.json()['name']))
+            recorder.write('/aira/data/weather',
+                           String(data=r.json()['weather'][0]['description']))
+            recorder.write('/aira/data/humidity',
+                           String(data='Humidity: ' + str(r.json()['main']['humidity'])))
+            temp = float(r.json()['main']['humidity']) - 273.15
+            recorder.write('/aira/data/temp',
+                           String(data='Temp, Celsius: ' + str(temp)))
+            recorder.write('/aira/data/wind',
+                           String(data='Wind, meter/sec: ' + str(r.json()['wind']['speed'])))
+
+            recorder.close()
+
+            ipfs_response = ipfs.add(result_file)
+            try:
+                result = ipfs_response['Hash']
+            except TypeError:
+                rospy.logwarn('IPFS add proceeding error: %s', ipfs_response[1]['Message'])
+                result = ipfs_response[0]['Hash']
+
+            res = Result()
+            res.liability = "0x0000000000000000000000000000000000000000"
+            res.result = result
+            rospy.loginfo(result)
+            send_res.publish(res)
+
+
+if __name__ == '__main__':
+    rospy.init_node('aira')
+    rospy.Subscriber('/liability/infochan/incoming/ask', Ask, callback)
+    rospy.spin()
